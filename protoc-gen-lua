@@ -27,7 +27,7 @@
 # Yes, it is currently written in Python. That's how bootstrapping works,
 # people.
 
-from lua_protobuf.generator import file_source, file_header, lua_protobuf_header
+from lua_protobuf.generator import file_source, file_header, lua_protobuf_header, lua_protobuf_source
 from google.protobuf.descriptor import FieldDescriptor
 from google.protobuf.compiler.plugin_pb2 import CodeGeneratorRequest, CodeGeneratorResponse
 from sys import stdin, stdout, stderr
@@ -58,6 +58,10 @@ for i in range(0, len(request.proto_file)):
 f = response.file.add()
 f.name = 'lua-protobuf.h'
 f.content = lua_protobuf_header()
+
+f = response.file.add()
+f.name = 'lua-protobuf.cc'
+f.content = lua_protobuf_source()
 
 stdout.write(response.SerializeToString())
 exit(0)
