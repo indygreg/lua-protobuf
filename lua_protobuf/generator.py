@@ -60,6 +60,12 @@ extern "C" {
 
 #include <lua.h>
 
+#ifdef WINDOWS
+#define LUA_PROTOBUF_EXPORT __declspec(stdcall)
+#else
+#define LUA_PROTOBUF_EXPORT
+#endif
+
 // type for callback function that is executed before Lua performs garbage
 // collection on a message instance.
 // if called function returns 1, Lua will free the memory backing the object
