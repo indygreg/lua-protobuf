@@ -58,11 +58,17 @@ def lua_protobuf_header():
 extern "C" {
 #endif
 
+#include <lua.h>
+
 // type for callback function that is executed before Lua performs garbage
 // collection on a message instance.
 // if called function returns 1, Lua will free the memory backing the object
 // if returns 0, Lua will not free the memory
 typedef int (*lua_protobuf_gc_callback)(::google::protobuf::Message *msg, void *userdata);
+
+// __index and __newindex functions for enum tables
+LUA_PROTOBUF_EXPORT int lua_protobuf_enum_index(lua_State *L);
+LUA_PROTOBUF_EXPORT int lua_protobuf_enum_newindex(lua_State *L);
 
 // GC callback function that always returns true
 LUA_PROTOBUF_EXPORT int lua_protobuf_gc_always_free(::google::protobuf::Message *msg, void *userdata);
@@ -80,6 +86,26 @@ def lua_protobuf_source():
     return '''
 
 #include "lua-protobuf.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <lauxlib.h>
+
+#ifdef __cplusplus
+}
+#endif
+
+int lua_protobuf_enum_index(lua_State *L)
+{
+    return luaL_error(L, "attempting to access undefined enumeration value: %s", lua_tostring(L, 2));
+}
+
+int lua_protobuf_enum_newindex(lua_State *L)
+{
+    return luaL_error(L, "cannot modify enumeration tables");
+}
 
 int lua_protobuf_gc_always_free(::google::protobuf::Message *msg, void *ud)
 {
@@ -660,6 +686,9 @@ def message_open(package, message):
         'lua_setfield(L, -2, "__index");',
         'luaL_register(L, NULL, %s_methods);' % message,
         'luaL_register(L, "%s", %s_functions);' % (lua_libname(package, message), message),
+
+        # this is wrong if we are calling through normal Lua module load means
+        'lua_pop(L, 1);',
         'return 1;',
         '}',
         '\n',
@@ -795,6 +824,67 @@ def message_source(package, message_descriptor):
 
     return lines
 
+def enum_source(package, descriptor):
+    '''Returns source code defining an enumeration type'''
+
+    name = descriptor.name
+
+    # enums are a little funky
+    # at the core, there is a table whose keys are the enum string names and
+    # values corresponding to the respective integer values. this table also
+    # has a metatable with __index to throw errors when unknown enumerations
+    # are accessed
+    #
+    # this table is then wrapped in a proxy table. the proxy table is empty
+    # but has a metatable with __index and __newindex set. __index is the
+    # table that actually contains the values. __newindex is a function that
+    # always throws an error.
+    #
+    # we need the proxy table so we can intercept all requests for writes.
+    # __newindex is only called for new keys, so we need an empty table so
+    # all writes are sent to __newindex
+    lines = [
+        '// %s enum' % name,
+        'lua_newtable(L); // proxy table',
+        'lua_newtable(L); // main table',
+    ]
+
+    # assign enumerations to the table
+    for value in descriptor.value:
+        k = value.name
+        v = value.number
+        lines.extend([
+            'lua_pushnumber(L, %d);' % v,
+            'lua_setfield(L, -2, "%s");' % k
+        ])
+
+    # assign the metatable
+    lines.extend([
+        '// define metatable on main table',
+        'lua_newtable(L);',
+        'lua_pushcfunction(L, lua_protobuf_enum_index);',
+        'lua_setfield(L, -2, "__index");',
+        'lua_setmetatable(L, -2);',
+        '',
+
+        '// define metatable on proxy table',
+        'lua_newtable(L);',
+        # proxy meta: -1; main: -2; proxy: -3
+        'lua_pushvalue(L, -2);',
+        'lua_setfield(L, -2, "__index");',
+        'lua_pushcfunction(L, lua_protobuf_enum_newindex);',
+        'lua_setfield(L, -2, "__newindex");',
+        'lua_remove(L, -2);',
+        'lua_setmetatable(L, -2);',
+
+        # proxy at top of statck now
+        # assign to appropriate module
+        'lua_setfield(L, -2, "%s");' % name,
+        '// end %s enum' % name
+    ])
+
+    return lines
+
 def file_header(file_descriptor):
 
     filename = file_descriptor.name
@@ -825,10 +915,47 @@ def file_source(file_descriptor):
     lines.extend(source_header(filename, package))
     lines.append('using ::std::string;\n')
 
-    lines.append('int %sopen(lua_State *L)' % package_function_prefix(package))
-    lines.append('{')
+    lines.extend([
+        'int %sopen(lua_State *L)' % package_function_prefix(package),
+        '{',
+    ])
+
+    # we populate enumerations as tables inside the protobuf global
+    # variable/module
+    # this is a little tricky, because we need to ensure all the parent tables
+    # are present
+    # i.e. protobuf.package.foo.enum => protobuf['package']['foo']['enum']
+    # we interate over all the tables and create missing ones, as necessary
+
+    # we cheat here and use the undocumented/internal luaL_findtable function
+    # we probably shouldn't rely on an "internal" API, so
+    # TODO don't use internal API call
+    lines.extend([
+        'const char *table = luaL_findtable(L, LUA_GLOBALSINDEX, "protobuf.%s", 1);' % package,
+        'if (table) {',
+            'return luaL_error(L, "could not create parent Lua tables");',
+        '}',
+        'if (!lua_istable(L, -1)) {',
+            'lua_newtable(L);',
+            'lua_setfield(L, -2, "%s");' % package,
+        '}',
+    ])
+
+    for descriptor in file_descriptor.enum_type:
+        lines.extend(enum_source(package, descriptor))
+
+    lines.extend([
+        # don't need main table on stack any more
+        'lua_pop(L, 1);',
+
+        # and we register this package as a module, complete with enumerations
+        'luaL_Reg funcs [] = { { NULL, NULL } };',
+        'luaL_register(L, "protobuf.%s", funcs);' % package,
+    ])
+
     for descriptor in file_descriptor.message_type:
         lines.append('%s(L);' % message_open_function(package, descriptor.name))
+
     lines.append('return 1;')
     lines.append('}')
     lines.append('\n')
