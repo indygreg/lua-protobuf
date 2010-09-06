@@ -177,7 +177,7 @@ def package_function_prefix(package):
 def message_function_prefix(package, message):
     return '%s%s_' % (package_function_prefix(package), message)
 
-def message_open_function(package, message):
+def message_open_function_name(package, message):
     '''Returns function name that registers the Lua library for a message type'''
 
     return '%sopen' % message_function_prefix(package, message)
@@ -675,24 +675,33 @@ def message_method_array(package, descriptor):
 
     return lines
 
-def message_open(package, message):
+def message_open_function(package, descriptor):
     '''Function definition for opening/registering a message type'''
 
-    return [
-        'int %s(lua_State *L)' % message_open_function(package, message),
+    message = descriptor.name
+
+    lines = [
+        'int %s(lua_State *L)' % message_open_function_name(package, message),
         '{',
         'luaL_newmetatable(L, "%s");' % metatable(package, message),
         'lua_pushvalue(L, -1);',
         'lua_setfield(L, -2, "__index");',
         'luaL_register(L, NULL, %s_methods);' % message,
         'luaL_register(L, "%s", %s_functions);' % (lua_libname(package, message), message),
+    ]
 
+    for enum_descriptor in descriptor.enum_type:
+        lines.extend(enum_source(enum_descriptor))
+
+    lines.extend([
         # this is wrong if we are calling through normal Lua module load means
         'lua_pop(L, 1);',
         'return 1;',
         '}',
         '\n',
-    ]
+    ])
+
+    return lines
 
 def message_header(package, message_descriptor):
     '''Returns the lines for a header definition of a message'''
@@ -707,7 +716,7 @@ def message_header(package, message_descriptor):
 
     lines.extend([
         '// registers the message type with Lua',
-        'LUA_PROTOBUF_EXPORT int %s(lua_State *L);\n' % message_open_function(package, message_name),
+        'LUA_PROTOBUF_EXPORT int %s(lua_State *L);\n' % message_open_function_name(package, message_name),
         '',
         '// push a copy of the message to the Lua stack',
         '// caller is free to use original message however she wants, but changes will not',
@@ -789,7 +798,7 @@ def message_source(package, message_descriptor):
 
     lines.extend(message_function_array(package, message))
     lines.extend(message_method_array(package, message_descriptor))
-    lines.extend(message_open(package, message))
+    lines.extend(message_open_function(package, message_descriptor))
     lines.extend(message_pushcopy_function(package, message))
     lines.extend(message_pushreference_function(package, message))
     lines.extend(new_message(package, message))
@@ -824,8 +833,11 @@ def message_source(package, message_descriptor):
 
     return lines
 
-def enum_source(package, descriptor):
+def enum_source(descriptor):
     '''Returns source code defining an enumeration type'''
+
+    # this function assumes the module/table the enum should be assigned to
+    # is at the top of the stack when it is called
 
     name = descriptor.name
 
@@ -877,7 +889,7 @@ def enum_source(package, descriptor):
         'lua_remove(L, -2);',
         'lua_setmetatable(L, -2);',
 
-        # proxy at top of statck now
+        # proxy at top of stack now
         # assign to appropriate module
         'lua_setfield(L, -2, "%s");' % name,
         '// end %s enum' % name
@@ -942,7 +954,7 @@ def file_source(file_descriptor):
     ])
 
     for descriptor in file_descriptor.enum_type:
-        lines.extend(enum_source(package, descriptor))
+        lines.extend(enum_source(descriptor))
 
     lines.extend([
         # don't need main table on stack any more
@@ -954,7 +966,7 @@ def file_source(file_descriptor):
     ])
 
     for descriptor in file_descriptor.message_type:
-        lines.append('%s(L);' % message_open_function(package, descriptor.name))
+        lines.append('%s(L);' % message_open_function_name(package, descriptor.name))
 
     lines.append('return 1;')
     lines.append('}')
