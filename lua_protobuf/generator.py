@@ -182,8 +182,11 @@ def message_open_function_name(package, message):
 
     return '%sopen' % message_function_prefix(package, message)
 
-def cpp_class(package, message):
+def cpp_class(package, message = None):
     '''Returns the fully qualified class name for a message type'''
+
+    if not message:
+        return package.replace('.', '::')
 
     return '::%s::%s' % ( package.replace('.', '::'), message )
 
@@ -208,13 +211,13 @@ def metatable(package, message):
     '''Returns Lua metatable for protocol buffer message type'''
     return 'protobuf_.%s.%s' % (package, message)
 
-def obtain_message_from_udata(package, message, index=1):
+def obtain_message_from_udata(package, message=None, index=1, varname='m'):
     '''Statement that obtains a message from userdata'''
 
     c = cpp_class(package, message)
     return [
-        'msg_udata * ud = (msg_udata *)%s;' % check_udata(package, message, index),
-        '%s *m = (%s *)ud->msg;' % ( c, c ),
+        'msg_udata * %sud = (msg_udata *)%s;' % ( varname, check_udata(package, message, index) ),
+        '%s *%s = (%s *)%sud->msg;' % ( c, varname, c, varname ),
     ]
 
 def check_udata(package, message, index=1):
@@ -254,11 +257,27 @@ def size_body(package, message, field):
 
     return lines
 
+def add_body(package, message, field, type_name):
+    '''Returns the function body for the add_<field> function for repeated embedded messages'''
+    lines = []
+    lines.extend(obtain_message_from_udata(package, message))
+    lines.extend([
+        '%s *msg_new = m->add_%s();' % ( cpp_class(type_name), field ),
+
+        # since the message is allocated out of the containing message, Lua
+        # does not need to do GC
+        'lua_protobuf%s_pushreference(L, msg_new, NULL, NULL);' % type_name.replace('.', '_'),
+        'return 1;',
+    ])
+
+    return lines
+
 def field_get(package, message, field_descriptor):
     '''Returns function definition for a get_<field> function'''
 
     name = field_descriptor.name
     type = field_descriptor.type
+    type_name = field_descriptor.type_name
     label = field_descriptor.label
     repeated = label == FieldDescriptor.LABEL_REPEATED
 
@@ -287,11 +306,6 @@ def field_get(package, message, field_descriptor):
     # TODO float and double types are not equivalent. don't treat them as such
     # TODO figure out how to support 64 bit integers properly
 
-    # TODO support the follwoing
-    #   FieldDescriptor.TYPE_GROUP
-    #   FieldDescriptor.TYPE_MESSAGE
-    #   FieldDescriptor.TYPE_ENUM
-
     if repeated:
         if type in [ FieldDescriptor.TYPE_STRING, FieldDescriptor.TYPE_BYTES ]:
             lines.extend([
@@ -313,8 +327,17 @@ def field_get(package, message, field_descriptor):
         elif type == FieldDescriptor.TYPE_FLOAT or type == FieldDescriptor.TYPE_DOUBLE:
             lines.append('lua_pushnumber(L, m->%s(index-1));' % name)
 
+        elif type == FieldDescriptor.TYPE_ENUM:
+            lines.append('lua_pushnumber(L, m->%s(index-1));' % name)
+
+        elif type == FieldDescriptor.TYPE_MESSAGE:
+            lines.extend([
+                '%s * got_msg = m->mutable_%s(index-1);' % ( type_name.replace('.', '::'), name ),
+                'lua_protobuf%s_pushreference(L, got_msg, NULL, NULL);' % type_name.replace('.', '_'),
+            ])
+
         else:
-            lines.append('return luaL_errorL, "lua-protobuf does not support this field type");')
+            lines.append('return luaL_error(L, "lua-protobuf does not support this field type");')
     else:
         # for scalar fields, we push nil if the value is not defined
         # this is the Lua way
@@ -335,6 +358,22 @@ def field_get(package, message, field_descriptor):
 
         elif type == FieldDescriptor.TYPE_FLOAT or type == FieldDescriptor.TYPE_DOUBLE:
             lines.append('m->has_%s() ? lua_pushnumber(L, m->%s()) : lua_pushnil(L);' % ( name, name ))
+
+        elif type == FieldDescriptor.TYPE_ENUM:
+            lines.append('m->has_%s() ? lua_pushinteger(L, m->%s()) : lua_pushnil(L);' % ( name, name ))
+
+        elif type == FieldDescriptor.TYPE_MESSAGE:
+            lines.extend([
+                'if (!m->has_%s()) {' % name,
+                    'lua_pushnil(L);',
+                '}',
+
+                # we push the message as userdata
+                # since the message is allocated out of the parent message, we
+                # don't need to do garbage collection
+                '%s * got_msg = m->mutable_%s();' % ( type_name.replace('.', '::'), name ),
+                'lua_protobuf%s_pushreference(L, got_msg, NULL, NULL);' % type_name.replace('.', '_'),
+            ])
 
         else:
             # not supported yet :(
@@ -360,6 +399,7 @@ def field_set(package, message, field_descriptor):
 
     name = field_descriptor.name
     type = field_descriptor.type
+    type_name = field_descriptor.type_name
     label = field_descriptor.label
     repeated = label == FieldDescriptor.LABEL_REPEATED
 
@@ -389,11 +429,6 @@ def field_set(package, message, field_descriptor):
 
     # TODO proper 64 bit handling
 
-    # TODO support following types
-    #    FieldDescriptor.TYPE_GROUP
-    #    FieldDescriptor.TYPE_MESSAGE
-    #    FieldDescriptor.TYPE_ENUM
-
     # now move on to the assignment
     if repeated:
         if type in [ FieldDescriptor.TYPE_STRING, FieldDescriptor.TYPE_BYTES ]:
@@ -422,6 +457,14 @@ def field_set(package, message, field_descriptor):
 
             lines.append('lua_Integer i = lua_tointeger(L, 3);')
             lines.extend(field_set_assignment(name, 'i'))
+
+        elif type == FieldDescriptor.TYPE_ENUM:
+            lines.append('lua_Integer i = lua_tointeger(L, 3);')
+            lines.extend(field_set_assignment(name, '(%s)i' % type_name.replace('.', '::')))
+
+        elif type == FieldDescriptor.TYPE_MESSAGE:
+            lines.append('return luaL_error(L, "to manipulate embedded messages, fetch the embedded message and modify it");')
+
         else:
             lines.append('return luaL_error(L, "field type not yet supported");')
 
@@ -481,6 +524,16 @@ def field_set(package, message, field_descriptor):
                 'm->set_%s(b);' % name,
                 'return 0;',
             ])
+
+        elif type == FieldDescriptor.TYPE_ENUM:
+            lines.extend([
+                'lua_Integer i = luaL_checkinteger(L, 2);',
+                'm->set_%s((%s)i);' % ( name, type_name.replace('.', '::') ),
+                'return 0;',
+            ])
+
+        elif type == FieldDescriptor.TYPE_MESSAGE:
+            lines.append('return luaL_error(L, "to manipulate embedded messages, obtain the embedded message and manipulate it");')
 
         else:
             lines.append('return luaL_error(L, "field type is not yet supported");')
@@ -573,15 +626,15 @@ def gc_message_function(package, message):
     # if Lua "owns" the message, we delete it
     # else, we delete only if a callback exists and it says it is OK
     lines.extend([
-        'if (ud->lua_owns) {',
-        'delete ud->msg;',
-        'ud->msg = NULL;',
+        'if (mud->lua_owns) {',
+        'delete mud->msg;',
+        'mud->msg = NULL;',
         'return 0;',
         '}',
         '',
-        'if (ud->gc_callback && ud->gc_callback(m, ud->callback_data)) {',
-        'delete ud->msg;',
-        'ud->msg = NULL;',
+        'if (mud->gc_callback && mud->gc_callback(m, mud->callback_data)) {',
+        'delete mud->msg;',
+        'mud->msg = NULL;',
         'return 0;',
         '}',
         'return 0;',
@@ -659,6 +712,7 @@ def message_method_array(package, descriptor):
     for fd in descriptor.field:
         name = fd.name
         label = fd.label
+        type = fd.type
 
         lines.append('{"clear_%s", %s},' % ( name, field_function_name(package, message, 'clear', name) ))
         lines.append('{"get_%s", %s},' % ( name, field_function_name(package, message, 'get', name) ))
@@ -669,6 +723,9 @@ def message_method_array(package, descriptor):
 
         if label == FieldDescriptor.LABEL_REPEATED:
             lines.append('{"size_%s", %s},' % ( name, field_function_name(package, message, 'size', name) ))
+
+            if type == FieldDescriptor.TYPE_MESSAGE:
+                lines.append('{"add_%s", %s},' % ( name, field_function_name(package, message, 'add', name) ))
 
     lines.append('{NULL, NULL},')
     lines.append('};\n')
@@ -775,6 +832,8 @@ def message_header(package, message_descriptor):
         lines.append('// %s %s %s = %d' % (field_label_s, field_type_s, field_name, field_number))
         lines.append('LUA_PROTOBUF_EXPORT int %s%s_clear_%s(lua_State *L);' % (function_prefix, message_name, field_name))
         lines.append('LUA_PROTOBUF_EXPORT int %s%s_get_%s(lua_State *L);' % (function_prefix, message_name, field_name))
+
+        # TODO I think we can get rid of this for message types
         lines.append('LUA_PROTOBUF_EXPORT int %s%s_set_%s(lua_State *L);' % (function_prefix, message_name, field_name))
 
         if field_label in [ FieldDescriptor.LABEL_REQUIRED, FieldDescriptor.LABEL_OPTIONAL ]:
@@ -782,6 +841,9 @@ def message_header(package, message_descriptor):
 
         if field_label == FieldDescriptor.LABEL_REPEATED:
             lines.append('LUA_PROTOBUF_EXPORT int %s%s_size_%s(lua_State *L);' % (function_prefix, message_name, field_name))
+
+            if field_type == FieldDescriptor.TYPE_MESSAGE:
+                lines.append('LUA_PROTOBUF_EXPORT int %s%s_add_%s(lua_State *L);' % ( function_prefix, message_name, field_name))
 
         lines.append('')
 
@@ -829,6 +891,11 @@ def message_source(package, message_descriptor):
             lines.extend(field_function_start(package, message, 'size', name))
             lines.extend(size_body(package, message, name))
             lines.append('}\n')
+
+            if descriptor.type == FieldDescriptor.TYPE_MESSAGE:
+                lines.extend(field_function_start(package, message, 'add', name))
+                lines.extend(add_body(package, message, name, descriptor.type_name))
+                lines.append('}\n')
 
 
     return lines
