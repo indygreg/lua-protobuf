@@ -30,3 +30,9 @@ You should be able to compile the produced .h and .cc files like you would for p
 For linking, you'll need to include whatever library contains Lua. On *NIX toolchains, this typically corresponds to the linker flag _-llua_ or _-llua5.1_.
 
 The produced C++ code contains _extern "C" { }_ blocks around all code that utilizes Lua API function calls to avoid C++ name mangling.
+
+## Windows
+
+Windows requires an identifier for symbols to be exported from shared libraries. If compiling the lua-protobuf output to a shared library, you'll need to use a preprocessor define:
+
+    #define LUA_PROTOBUF_EXPORT __declspec(dllexport)
