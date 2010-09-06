@@ -43,6 +43,13 @@ for i in range(0, len(request.proto_file)):
     file_descriptor = request.proto_file[i]
     filename = file_descriptor.name
     package = file_descriptor.package
+
+    # for now, we require package, which is bad
+    # TODO fix this
+    if not package:
+        response.error = 'file seen without package. lua-protobuf currently requires a package on every proto file: %s' % filename
+        break
+
     define_value = package.replace('.', '_').upper()
     cpp_header = '%s.pb.h' % package.replace('.', '/')
     cpp_namespace = '::%s' % package.replace('.', '::')
