@@ -46,7 +46,7 @@ Next, find the location of the installed protocol buffer Python package. If you 
 In common English:
 
 1. Create a new directory, from the install root, *google/protobuf/compiler*
-2. Create an empty file, *__init__.py* in this directory. This tells Python that the directory contains Python modules.
+2. Create an empty file, *\_\_init\_\_.py* in this directory. This tells Python that the directory contains Python modules.
 3. Copy the *plugin_pb2.py* file produced by protoc to this new directory.
 
 Depending on the installed location of protocol buffers, these actions may require superuser or administrator privileges.
