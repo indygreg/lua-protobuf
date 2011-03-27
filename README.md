@@ -37,7 +37,7 @@ Assuming you have a working protoc compiler on your system and have the existing
 
 The command should produce no output if successful. Additionally, the file */path/to/output/directory/google/protobuf/compiler/plugin_pb2.py* should have been created.
 
-Next, find the location of the installed protocol buffer Python package. If you have *locate*, try finding it via *`find descriptor_pb2.py`*. A common location is something like */usr/lib/python2.6/site-packages/protobuf-2.3.0-py2.6.egg/google/protobuf/*. Navigate to this directory and:
+Next, find the location of the installed protocol buffer Python package. If you have *locate*, try finding it via *`locate descriptor_pb2.py`*. A common location is something like */usr/lib/python2.6/site-packages/protobuf-2.3.0-py2.6.egg/google/protobuf/*. Navigate to this directory and:
 
     $ mkdir compiler
     $ touch compiler/__init__.py
