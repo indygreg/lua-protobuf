@@ -1,4 +1,4 @@
-#  Copyright 2010 Gregory Szorc
+#  Copyright 2011 Gregory Szorc
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -637,7 +637,6 @@ def gc_message_function(package, message):
         'mud->msg = NULL;',
         'return 0;',
         '}',
-        '',
         'if (mud->gc_callback && mud->gc_callback(m, mud->callback_data)) {',
         'delete mud->msg;',
         'mud->msg = NULL;',
