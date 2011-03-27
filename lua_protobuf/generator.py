@@ -61,7 +61,7 @@ extern "C" {
 #include <lua.h>
 
 #ifdef WINDOWS
-#define LUA_PROTOBUF_EXPORT __declspec(stdcall)
+#define LUA_PROTOBUF_EXPORT __declspec(dllexport)
 #else
 #define LUA_PROTOBUF_EXPORT
 #endif
