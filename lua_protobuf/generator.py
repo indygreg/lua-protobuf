@@ -612,12 +612,32 @@ def parsefromstring_message_function(package, message):
     lines = []
 
     lines.append('int %sparsefromstring(lua_State *L)' % message_function_prefix(package, message))
-    lines.append('{')
+    c = cpp_class(package, message)
 
-    # TODO implement
-    lines.append('assert(0);')
-    lines.append('return 1;')
-    lines.append('}')
+    lines.extend([
+        '{',
+        'if (lua_gettop(L) != 1) {',
+            'return luaL_error(L, "parsefromstring() requires a string argument. none given");',
+        '}',
+
+        'size_t len;',
+        'const char *s = luaL_checklstring(L, -1, &len);',
+        '%s * msg = new %s();' % ( c, c ),
+        'if (!msg->ParseFromArray((const void *)s, len)) {',
+            'return luaL_error(L, "error deserializing message");',
+        '}',
+
+        'msg_udata * ud = (msg_udata *)lua_newuserdata(L, sizeof(msg_udata));',
+        'ud->lua_owns = true;',
+        'ud->msg = msg;',
+        'ud->gc_callback = NULL;',
+        'ud->callback_data = NULL;',
+        'luaL_getmetatable(L, "%s");' % metatable(package, message),
+        'lua_setmetatable(L, -2);',
+
+        'return 1;',
+        '}',
+    ])
 
     return lines
 
