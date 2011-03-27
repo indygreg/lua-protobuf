@@ -422,7 +422,7 @@ def field_set(package, message, field_descriptor):
             '    return luaL_error(L, "required 2 arguments not passed to function");',
             '}',
             'lua_Integer index = luaL_checkinteger(L, 2);',
-            'size_t current_size = m->%s_size();' % name,
+            'int current_size = m->%s_size();' % name,
             'if (index < 1 || index > current_size + 1) {',
                 'return luaL_error(L, "index must be between 1 and %d", current_size + 1);',
             '}',
