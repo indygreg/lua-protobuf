@@ -32,6 +32,16 @@ from google.protobuf.descriptor import FieldDescriptor
 from google.protobuf.compiler.plugin_pb2 import CodeGeneratorRequest, CodeGeneratorResponse
 from sys import stdin, stdout, stderr
 
+# Python 3 should use binary buffer object
+try:
+    stdin = stdin.buffer
+except AttributeError:
+    pass
+try:
+    stdout = stdout.buffer
+except AttributeError:
+    pass
+
 serialized = stdin.read()
 request = CodeGeneratorRequest()
 request.ParseFromString(serialized)
